@@ -9,4 +9,4 @@ module github.com/Elagoht/collage-minimizer
 
 go 1.26
 
-require github.com/Elagoht/collage v0.4.0
+require github.com/Elagoht/collage v0.4.4
