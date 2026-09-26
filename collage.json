@@ -1,0 +1,28 @@
+{
+  "$schema": "https://raw.githubusercontent.com/Elagoht/collage-snippets-highlighter/main/schemas/collage-plugin-manifest.schema.json",
+  "name": "elagoht/minimizer",
+  "description": "A collage plugin that strips whitespace and comments from what an application serves: rendered pages, documents, and mounted assets.",
+  "repository": "https://github.com/Elagoht/collage-minimizer",
+  "config": {
+    "type": "object",
+    "description": "A collage plugin that strips whitespace and comments from what an application serves: rendered pages, documents, and mounted assets.",
+    "properties": {
+      "css": {
+        "type": "boolean",
+        "description": "CSS minifies mounted stylesheets."
+      },
+      "html": {
+        "type": "boolean",
+        "description": "HTML minifies rendered pages, and any mounted \".html\" file."
+      },
+      "js": {
+        "type": "boolean",
+        "description": "JS minifies mounted scripts. Newlines are preserved whatever this is set to; see minifyJS."
+      },
+      "json": {
+        "type": "boolean",
+        "description": "JSON minifies documents and mounted files served as JSON. It is exact: encoding/json knows the whole grammar."
+      }
+    }
+  }
+}
