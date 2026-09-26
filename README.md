@@ -82,3 +82,11 @@ go test ./...
 The tests worth reading first are the ones that assert nothing was broken: a URL in
 a JavaScript string surviving intact, `</b> world` keeping its space, a minified
 document still parsing as the same JSON value.
+
+## Changes
+
+### v0.1.1
+
+- Requires collage v0.24.0. Nothing else changes.
+- `Version()` reports the release, 0.1.1; it said 1.0.0 while the only release
+  was v0.1.0.
