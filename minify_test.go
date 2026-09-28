@@ -171,3 +171,13 @@ func TestMinify_NeverGrowsInput(t *testing.T) {
 		}
 	}
 }
+
+// Turkish İ is two bytes and lowercases to one, so a search in a lowercased copy
+// finds </pre> early: a ">" inside the element would end it there, and the
+// whitespace after would be collapsed.
+func TestMinifyHTML_ProtectedElementAfterNonASCIIText(t *testing.T) {
+	src := "<pre>İİİİİ>   a</pre>"
+	if out := string(minifyHTML([]byte(src))); out != src {
+		t.Errorf("<pre> content was altered: %q", out)
+	}
+}

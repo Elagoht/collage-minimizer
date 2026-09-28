@@ -359,8 +359,18 @@ func openingTagName(src []byte, i int) (string, int, bool) {
 }
 
 // indexFoldFrom finds needle in src at or after from, ignoring ASCII case.
+//
+// Only ASCII is lowercased. bytes.ToLower does not keep lengths — Turkish İ is two
+// bytes and lowercases to i, one — and an index into its result is not an index
+// into src.
 func indexFoldFrom(src []byte, needle string, from int) int {
-	lower := bytes.ToLower(src[from:])
+	lower := make([]byte, len(src)-from)
+	for i, c := range src[from:] {
+		if 'A' <= c && c <= 'Z' {
+			c += 'a' - 'A'
+		}
+		lower[i] = c
+	}
 	idx := bytes.Index(lower, []byte(strings.ToLower(needle)))
 	if idx < 0 {
 		return -1
