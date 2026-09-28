@@ -85,6 +85,16 @@ document still parsing as the same JSON value.
 
 ## Changes
 
+### v0.1.4
+
+- Requires collage v0.28.0, whose `WithLayouts` the tests use; `WithLayout` is
+  gone from collage since then.
+
+### v0.1.3
+
+- A `<script>`, `<style>` or other protected element after non-ASCII text, such
+  as Turkish İ, is kept verbatim.
+
 ### v0.1.2
 
 - `collage.json`: the plugin described to editors — its template functions,
