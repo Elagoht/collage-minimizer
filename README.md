@@ -24,9 +24,7 @@ refuses it by name rather than skipping its `Configure` silently.
 ```
 
 `New()` enables HTML, JSON and CSS. JavaScript is off by default, because it is
-where the difference between a scanner and a parser bites hardest and because the
-saving is the smallest of the four — every newline is kept, so what goes is
-indentation and comments.
+where the difference between a scanner and a parser bites hardest.
 
 Each key covers its language wherever it appears (since v0.1.5): `js` a mounted
 `.js` file and an inline `<script>` of JavaScript — no `type`, a JavaScript type, or
@@ -65,11 +63,16 @@ So:
   and `a:hover` are a descendant selector and a pseudo-class, and telling a
   selector's colon from a declaration's requires knowing which side of the brace you
   are on.
-- **JavaScript** keeps every newline. `return\n  x` is `return; x`, and joining
-  those lines changes what the program does; deciding which newlines are safe to
-  remove requires knowing where every statement ends. Strings, template literals and
-  regular expression literals are tracked, so a URL inside a string does not look
-  like the start of a comment.
+- **JavaScript** keeps a line break wherever a semicolon may stand for it.
+  `return\n  x` is `return; x`, and joining those lines changes what the program
+  does; deciding exactly where one is inserted requires knowing where every
+  statement ends. So a line is joined only after a token no statement can end
+  with — `{ ( [ , ; :` or an operator that needs something after it, such as `=`,
+  `&&` or `=>` — and kept after a name, a closing bracket, a string, a regular
+  expression or `++` (since v0.1.6; before, every newline was kept). Strings,
+  template literals — with the code in their `${…}` — and regular expression
+  literals are tracked, so a URL inside a string does not look like the start of a
+  comment, and `return /re/` is a regex, not a division.
 
 Nothing is reordered, renamed, rewritten or re-encoded. A result that came out
 larger than its input is discarded.

@@ -17,9 +17,10 @@ import (
 //
 // So these are scanners, not parsers. They know where strings, comments and other
 // protected regions begin and end, and outside those regions they remove only what
-// cannot carry meaning. JavaScript in particular keeps every newline, because
-// removing one can change what a program means; what goes is indentation, trailing
-// space, and comments.
+// cannot carry meaning. JavaScript in particular keeps a line break wherever a
+// semicolon may stand for it, because removing one there can change what a program
+// means; what goes is indentation, trailing space, comments, and the line breaks
+// no semicolon can stand for.
 
 // minifyJSON compacts JSON exactly, via the standard library. This is the only one
 // of the four that is lossless by construction rather than by care: encoding/json
@@ -281,13 +282,17 @@ func minifyCSS(src []byte) []byte {
 	return out
 }
 
-// minifyJS removes comments and horizontal whitespace, and keeps every newline.
+// minifyJS removes comments and whitespace, and keeps a line break wherever a
+// semicolon may stand for it.
 //
-// The newlines stay because JavaScript inserts semicolons at them. "return\n  x" is
-// "return; x", and joining those two lines changes what the program does. Deciding
-// which newlines are safe to remove requires knowing where every statement ends,
-// which requires a parser — so this does not try, and what it saves is indentation
-// and comments rather than line breaks.
+// JavaScript inserts semicolons at line breaks. "return\n  x" is "return; x", and
+// joining those two lines changes what the program does. Deciding exactly where one
+// is inserted requires knowing where every statement ends, which requires a parser —
+// so this does not try. It joins a line only after a token that cannot end a
+// statement: an opening bracket, a comma, a semicolon, a colon, or an operator
+// that needs something after it. There no semicolon can be inserted, and the break
+// is only whitespace. After anything else — a name, a closing bracket, a string, a
+// regular expression, "++" — the break stays.
 //
 // It tracks strings, template literals and regular expression literals, because
 // each of them can contain the character sequences that start a comment. A minifier
@@ -296,10 +301,31 @@ func minifyCSS(src []byte) []byte {
 func minifyJS(src []byte) []byte {
 	out := make([]byte, 0, len(src))
 	i := 0
+	// broken is set by a line break since the last token, decided when the next
+	// one arrives: a comment in between says nothing either way.
+	broken := false
+	// afterRegex is set while the last token is a regular expression literal,
+	// whose closing "/" ends an expression as a name does.
+	afterRegex := false
+
+	emit := func(next int) {
+		if broken {
+			broken = false
+			switch {
+			case len(out) == 0:
+			case !joinable(out, afterRegex) || bytes.HasPrefix(src[next:], []byte("-->")):
+				out = append(out, '\n')
+			case fuses(out[len(out)-1], src[next]):
+				out = append(out, ' ')
+			}
+		}
+		afterRegex = false
+	}
 
 	for i < len(src) {
 		switch {
 		case src[i] == '"' || src[i] == '\'' || src[i] == '`':
+			emit(i)
 			end := scanJSString(src, i)
 			out = append(out, src[i:end]...)
 			i = end
@@ -316,17 +342,24 @@ func minifyJS(src []byte) []byte {
 			if end < 0 {
 				return out
 			}
-			// A block comment spanning lines stood where a newline stood, and the
-			// newline may have been terminating a statement.
+			// A block comment spanning lines stood where a line break stood, and
+			// the break may have been terminating a statement.
 			if bytes.Contains(src[i:i+2+end+2], []byte("\n")) {
-				out = append(out, '\n')
+				broken = true
 			}
 			i += 2 + end + 2
 
 		case src[i] == '/' && regexCanStartHere(out):
+			emit(i)
 			end := scanJSRegex(src, i)
 			out = append(out, src[i:end]...)
 			i = end
+			// Conservative when the scan found a division after all: a kept break.
+			afterRegex = true
+
+		case src[i] == '\n':
+			broken = true
+			i++
 
 		case src[i] == ' ' || src[i] == '\t' || src[i] == '\r':
 			j := i
@@ -335,18 +368,52 @@ func minifyJS(src []byte) []byte {
 			}
 			// A run at the start of a line, or before one, carries nothing.
 			trailing := j < len(src) && src[j] == '\n'
-			leading := len(out) == 0 || out[len(out)-1] == '\n'
-			if !trailing && !leading {
+			leading := len(out) == 0 || broken
+			if !trailing && !leading && j < len(src) {
 				out = append(out, ' ')
 			}
 			i = j
 
 		default:
+			emit(i)
 			out = append(out, src[i])
 			i++
 		}
 	}
 	return out
+}
+
+// joinable reports whether a line break after out can go: whether out ends in a
+// token no statement can end with, so no semicolon can be inserted at the break.
+//
+// "/" is left out as a division, since a regular expression the scanner took for
+// one would end the line. "++" and "--" end an expression. A "." after a digit
+// may be the end of a number, "1.".
+func joinable(out []byte, afterRegex bool) bool {
+	if afterRegex {
+		return false
+	}
+	last := out[len(out)-1]
+	before := byte(0)
+	if len(out) > 1 {
+		before = out[len(out)-2]
+	}
+	switch last {
+	case '{', '(', '[', ',', ';', ':', '=', '*', '%', '&', '|', '^', '!', '~', '<', '>', '?':
+		return true
+	case '+', '-':
+		return before != last
+	case '.':
+		return !isDigit(before)
+	default:
+		return false
+	}
+}
+
+// fuses reports whether a and b, written next to each other, could read as one
+// token they were not: "+" and "+" as "++", "<" and "!" as the start of "<!--".
+func fuses(a, b byte) bool {
+	return strings.IndexByte("=+-*/%&|^!~<>?.", a) >= 0 && strings.IndexByte("=+-*/%&|^!~<>?.", b) >= 0
 }
 
 // scanCSSString returns the index just past the string literal starting at i.
@@ -367,27 +434,45 @@ func scanCSSString(src []byte, i int) int {
 }
 
 // scanJSString returns the index just past the string or template literal starting
-// at i. Template literals nest expressions, and an expression can hold another
-// template literal, so the nesting is counted rather than assumed away.
+// at i. A template's ${…} holds JavaScript, where braces and strings — another
+// template among them — may contain a "}" that does not end it, so the expression
+// is scanned as code rather than counted.
 func scanJSString(src []byte, i int) int {
 	quote := src[i]
 	j := i + 1
-	depth := 0
 	for j < len(src) {
 		switch {
 		case src[j] == '\\':
 			j += 2
 			continue
 		case quote == '`' && src[j] == '$' && j+1 < len(src) && src[j+1] == '{':
-			depth++
-			j += 2
+			j = scanTemplateExpression(src, j+2)
 			continue
-		case quote == '`' && depth > 0 && src[j] == '}':
-			depth--
-			j++
-			continue
-		case depth == 0 && src[j] == quote:
+		case src[j] == quote:
 			return j + 1
+		}
+		j++
+	}
+	return len(src)
+}
+
+// scanTemplateExpression returns the index just past the "}" that closes the
+// template expression whose code starts at i.
+func scanTemplateExpression(src []byte, i int) int {
+	depth := 0
+	j := i
+	for j < len(src) {
+		switch src[j] {
+		case '"', '\'', '`':
+			j = scanJSString(src, j)
+			continue
+		case '{':
+			depth++
+		case '}':
+			if depth == 0 {
+				return j + 1
+			}
+			depth--
 		}
 		j++
 	}
@@ -425,25 +510,51 @@ func scanJSRegex(src []byte, i int) int {
 }
 
 // regexCanStartHere decides whether a "/" begins a regular expression literal or is
-// a division operator, from the last significant character emitted.
+// a division operator, from the last significant token emitted.
 //
 // This is the classic ambiguity in JavaScript's grammar and it cannot be resolved
 // perfectly without parsing. The heuristic is the usual one: a "/" after a value —
-// an identifier, a number, a closing bracket — divides; anywhere else it opens a
-// regex. It errs toward treating "/" as division, which leaves a regex unscanned
-// and its contents merely copied through unchanged rather than mangled.
+// an identifier, a number, a closing bracket — divides; after a keyword that takes
+// an expression, "return /re/", or anywhere else, it opens a regex. It errs toward
+// treating "/" as division, which leaves a regex unscanned and its contents merely
+// copied through unchanged rather than mangled.
 func regexCanStartHere(out []byte) bool {
-	for i := len(out) - 1; i >= 0; i-- {
-		c := out[i]
-		if c == ' ' || c == '\t' || c == '\n' || c == '\r' {
-			continue
-		}
-		if isLetter(c) || isDigit(c) || c == ')' || c == ']' || c == '}' || c == '_' || c == '$' {
-			return false
-		}
+	i := len(out) - 1
+	for i >= 0 && isSpace(out[i]) {
+		i--
+	}
+	if i < 0 {
 		return true
 	}
-	return true
+	c := out[i]
+	if c == ')' || c == ']' || c == '}' {
+		return false
+	}
+	if !isWordByte(c) {
+		return true
+	}
+	end := i + 1
+	for i >= 0 && isWordByte(out[i]) {
+		i--
+	}
+	// A property is a value whatever it is called: a.return / 2.
+	if i >= 0 && out[i] == '.' {
+		return false
+	}
+	return contains(expressionKeywords, string(out[i+1:end]))
+}
+
+// expressionKeywords are the keywords after which an expression, and so a regular
+// expression literal, may begin.
+var expressionKeywords = []string{
+	"return", "typeof", "instanceof", "in", "of", "new", "delete", "void",
+	"throw", "case", "do", "else", "yield", "await",
+}
+
+// isWordByte reports whether c can be part of an identifier: a non-ASCII byte is
+// taken to be one, since a name may be written in any script.
+func isWordByte(c byte) bool {
+	return isLetter(c) || isDigit(c) || c == '_' || c == '$' || c >= 0x80
 }
 
 func isSpace(c byte) bool  { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' }

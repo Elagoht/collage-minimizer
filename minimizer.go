@@ -44,7 +44,7 @@ type Config struct {
 	// CSS minifies mounted stylesheets, and <style> elements in HTML.
 	CSS bool `json:"css"`
 	// JS minifies mounted scripts, and inline <script>s of JavaScript in HTML.
-	// Newlines are preserved whatever this is set to; see minifyJS.
+	// A line break is kept wherever a semicolon may stand for it; see minifyJS.
 	JS bool `json:"js"`
 }
 
@@ -63,9 +63,8 @@ type Plugin struct {
 // New returns a minifier with everything except JavaScript enabled.
 //
 // JavaScript is off by default because it is the format where the difference
-// between a scanner and a parser bites hardest, and because the saving from
-// stripping indentation — all this takes, since every newline stays — is the
-// smallest of the four. An application that wants it says so.
+// between a scanner and a parser bites hardest. An application that wants it says
+// so.
 func New() *Plugin {
 	return &Plugin{cfg: Config{HTML: true, JSON: true, CSS: true}}
 }
@@ -74,7 +73,7 @@ func New() *Plugin {
 func NewWith(cfg Config) *Plugin { return &Plugin{cfg: cfg} }
 
 func (p *Plugin) Name() string    { return Name }
-func (p *Plugin) Version() string { return "0.1.5" }
+func (p *Plugin) Version() string { return "0.1.6" }
 
 // Configure decodes the application's configuration over whatever New set, and
 // registers the filesystem wrapper that minifies mounted assets.

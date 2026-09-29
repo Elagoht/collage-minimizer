@@ -17,7 +17,7 @@
       },
       "js": {
         "type": "boolean",
-        "description": "JS minifies mounted scripts, and inline <script>s of JavaScript in HTML. Newlines are preserved whatever this is set to; see minifyJS."
+        "description": "JS minifies mounted scripts, and inline <script>s of JavaScript in HTML. A line break is kept wherever a semicolon may stand for it; see minifyJS."
       },
       "json": {
         "type": "boolean",

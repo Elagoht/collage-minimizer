@@ -94,17 +94,63 @@ func TestMinifyCSS_LeavesStringsAlone(t *testing.T) {
 	}
 }
 
-func TestMinifyJS_KeepsEveryNewline(t *testing.T) {
+func TestMinifyJS_KeepsANewlineASemicolonMayStandFor(t *testing.T) {
 	// Automatic semicolon insertion: "return\n  x" is "return; x". Joining those
-	// lines changes what the program does, so no newline may be removed.
+	// lines changes what the program does, so that newline stays.
 	src := []byte("function f() {\n    return\n    1\n}")
 
 	out := string(minifyJS(src))
-	if got, want := strings.Count(out, "\n"), strings.Count(string(src), "\n"); got != want {
-		t.Errorf("newlines = %d, want %d — removing one can change what the program means:\n%q", got, want, out)
+	if !strings.Contains(out, "return\n1") {
+		t.Errorf("the newline after return was removed — it is a semicolon there:\n%q", out)
 	}
 	if strings.Contains(out, "    return") {
 		t.Errorf("indentation was not removed: %q", out)
+	}
+}
+
+// A line break goes only where no semicolon can be inserted for it: after a
+// token that cannot end a statement. Everywhere else it stays.
+func TestMinifyJS_JoinsLinesOnlyWhereNoSemicolonCanBeInserted(t *testing.T) {
+	cases := []struct{ name, src, want string }{
+		{"the flash script",
+			"document.querySelectorAll(\".flash\").forEach((toast) => {\n  window.setTimeout(() => {\n    toast.remove();\n  }, 3780);\n});",
+			"document.querySelectorAll(\".flash\").forEach((toast) => {window.setTimeout(() => {toast.remove();}, 3780);});"},
+		{"after an opener, a comma, a semicolon", "f(\n  a,\n  [\n    b\n  ]\n);\ng()", "f(a,[b\n]\n);g()"},
+		{"after an operator", "x = a &&\n  b ||\n  c ?\n  d :\n  e", "x = a &&b ||c ?d :e"},
+		{"an arrow's body", "const f = () =>\n  1", "const f = () =>1"},
+		{"a member on the next line", "a.\nb()", "a.b()"},
+		// Each of these ends a statement where the line does.
+		{"after a call", "a()\nb()", "a()\nb()"},
+		{"after a function expression", "var f = function () {}\nx()", "var f = function () {}\nx()"},
+		{"after an identifier", "a\n(b)", "a\n(b)"},
+		{"after a string", "a = \"x\"\nb()", "a = \"x\"\nb()"},
+		{"after a template", "a = `x`\nb()", "a = `x`\nb()"},
+		{"after a postfix ++", "a++\nb", "a++\nb"},
+		{"after a postfix --", "a--\nb", "a--\nb"},
+		{"after a regex", "x = /re/\nfoo()", "x = /re/\nfoo()"},
+		{"after a division", "x = a /\nb", "x = a /\nb"},
+		{"after a number ending in a dot", "x = 1.\nfoo()", "x = 1.\nfoo()"},
+		{"before else", "if (a) {\n  b()\n}\nelse {\n  c()\n}", "if (a) {b()\n}\nelse {c()\n}"},
+		{"throw", "throw\nnew Error()", "throw\nnew Error()"},
+		// Joined, two operators could fuse into another token.
+		{"+ and +", "a +\n+b", "a + +b"},
+		{"- and -", "a -\n-b", "a - -b"},
+		{"< and !--, which would open an HTML comment", "x <\n!--y", "x < !--y"},
+		// "-->" at the start of a line is a comment in a classic script.
+		{"--> at the start of a line", "a();\n--> old\nb()", "a();\n--> old\nb()"},
+		// A comment on its own line is not what the join looks at: what surrounds it is.
+		{"a line comment between", "x = {\n  // note\n  b: 1\n}", "x = {b: 1\n}"},
+		{"a block comment between", "x = [\n  /* a\n  note */\n  1\n]", "x = [1\n]"},
+		{"a comment after a call", "a()\n// note\nb()", "a()\nb()"},
+		{"blank lines", "a()\n\n\n  b()", "a()\nb()"},
+		{"a string continued across lines", "x = [\n\"a\\\nb\"\n]", "x = [\"a\\\nb\"\n]"},
+		{"a template spanning lines", "x = (\n`a\n  b`\n)", "x = (`a\n  b`\n)"},
+		{"non-ASCII names", "const ş = {\n  ğ: 1\n}", "const ş = {ğ: 1\n}"},
+	}
+	for _, c := range cases {
+		if got := string(minifyJS([]byte(c.src))); got != c.want {
+			t.Errorf("%s:\n got %q\nwant %q", c.name, got, c.want)
+		}
 	}
 }
 
@@ -196,7 +242,7 @@ func TestMinifyHTMLWith_MinifiesInlineLanguages(t *testing.T) {
 	}{
 		{"script", all,
 			"<script nonce=\"n\">\n      // note\n      var a = 1;\n      go(\"İstanbul  ş\")\n    </script>",
-			"<script nonce=\"n\">var a = 1;\ngo(\"İstanbul  ş\")</script>"},
+			"<script nonce=\"n\">var a = 1;go(\"İstanbul  ş\")</script>"},
 		{"module, any case and quote", all,
 			"<script TYPE='Module'>\n  import a from \"/a.js\"\n</script>",
 			"<script TYPE='Module'>import a from \"/a.js\"</script>"},
@@ -249,5 +295,40 @@ func TestMinifyHTML_TrimsTheDocumentsEnds(t *testing.T) {
 	// Text at an end is still text, and its space still separates.
 	if got, want := string(minifyHTML([]byte("a  <b>c</b>  d"))), "a <b>c</b> d"; got != want {
 		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// After a keyword that takes an expression, "/" opens a regular expression,
+// though a keyword is a word. Taken for a division, the pattern's "//" or quote
+// would read as a comment or a string.
+func TestMinifyJS_RegexAfterAKeyword(t *testing.T) {
+	for _, src := range []string{
+		`function f(p) { return /^[a-z]:\//i.test(p) }`,
+		`x = typeof /a'b/`,
+		"switch (a) { case /\"x/.source: y() }",
+		`if (a) b(); else /c"/.test(d)`,
+	} {
+		if got := string(minifyJS([]byte(src))); got != src {
+			t.Errorf("minifyJS(%q) = %q, want it unchanged", src, got)
+		}
+	}
+	// A property named after a keyword is still a value.
+	if got, want := string(minifyJS([]byte("a.return / 2 / b"))), "a.return / 2 / b"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// Inside a template's ${…}, braces and strings are JavaScript: a "}" in either
+// does not end the expression.
+func TestMinifyJS_TemplateExpressionsHoldBracesAndStrings(t *testing.T) {
+	for _, src := range []string{
+		"x = `a ${ {b: 1}.b } /* kept */ c`",
+		"x = `a ${ \"}\" } /* kept */ c`",
+		"x = `a ${ `in ${ '}' } ner` } /* kept */ c`",
+		"x = f`/*# sourceURL=${id} */`",
+	} {
+		if got := string(minifyJS([]byte(src))); got != src {
+			t.Errorf("minifyJS(%q) = %q, want it unchanged", src, got)
+		}
 	}
 }
