@@ -160,11 +160,14 @@ func TestMinifyJS_KeepsALineForAMultilineBlockComment(t *testing.T) {
 func TestMinify_NeverGrowsInput(t *testing.T) {
 	for name, fn := range map[string]func([]byte) []byte{
 		"html": minifyHTML,
+		"html+inline": func(src []byte) []byte {
+			return minifyHTMLWith(src, languages{js: true, css: true, json: true})
+		},
 		"css":  minifyCSS,
 		"js":   minifyJS,
 		"json": minifyJSON,
 	} {
-		for _, src := range []string{"", " ", "a", "{}", "<p>x</p>", "/*", "//", `"`, "`"} {
+		for _, src := range []string{"", " ", "a", "{}", "<p>x</p>", "/*", "//", `"`, "`", "<script>", "<script>a", "<style x='>"} {
 			if got := fn([]byte(src)); len(got) > len(src) {
 				t.Errorf("%s(%q) grew from %d to %d bytes", name, src, len(src), len(got))
 			}
@@ -179,5 +182,72 @@ func TestMinifyHTML_ProtectedElementAfterNonASCIIText(t *testing.T) {
 	src := "<pre>İİİİİ>   a</pre>"
 	if out := string(minifyHTML([]byte(src))); out != src {
 		t.Errorf("<pre> content was altered: %q", out)
+	}
+}
+
+// Inline languages, each under its own key, and nothing the key did not ask for.
+func TestMinifyHTMLWith_MinifiesInlineLanguages(t *testing.T) {
+	all := languages{js: true, css: true, json: true}
+	cases := []struct {
+		name  string
+		langs languages
+		src   string
+		want  string
+	}{
+		{"script", all,
+			"<script nonce=\"n\">\n      // note\n      var a = 1;\n      go(\"İstanbul  ş\")\n    </script>",
+			"<script nonce=\"n\">var a = 1;\ngo(\"İstanbul  ş\")</script>"},
+		{"module, any case and quote", all,
+			"<script TYPE='Module'>\n  import a from \"/a.js\"\n</script>",
+			"<script TYPE='Module'>import a from \"/a.js\"</script>"},
+		{"script with js off", languages{css: true, json: true},
+			"<script>\n  var a = 1;\n</script>",
+			"<script>\n  var a = 1;\n</script>"},
+		{"style", all,
+			"<style media=\"screen\">\n  .a {\n    /* note */\n    color: red;\n  }\n</style>",
+			"<style media=\"screen\">.a { color: red; }</style>"},
+		{"style with css off", languages{js: true},
+			"<style>\n  .a { color: red; }\n</style>",
+			"<style>\n  .a { color: red; }\n</style>"},
+		{"ld+json", all,
+			"<script type=\"application/ld+json\">\n  {\n    \"name\": \"Sen de Yaz\"\n  }\n</script>",
+			"<script type=\"application/ld+json\">{\"name\":\"Sen de Yaz\"}</script>"},
+		{"importmap", all,
+			"<script type=\"importmap\">\n{ \"imports\": { \"a\": \"/a.js\" } }\n</script>",
+			"<script type=\"importmap\">{\"imports\":{\"a\":\"/a.js\"}}</script>"},
+		{"invalid json is left alone", all,
+			"<script type=\"application/ld+json\">\n  { nope\n</script>",
+			"<script type=\"application/ld+json\">\n  { nope\n</script>"},
+		{"a type it does not know", all,
+			"<script type=\"text/template\">\n  <p>  {{ name }}  </p>\n</script>",
+			"<script type=\"text/template\">\n  <p>  {{ name }}  </p>\n</script>"},
+		{"a style type it does not know", all,
+			"<style type=\"text/less\">\n  @a: red;\n</style>",
+			"<style type=\"text/less\">\n  @a: red;\n</style>"},
+		// A ">" inside a quoted attribute is not the end of the tag. Were it taken
+		// for one, the body would start in the middle of the attribute.
+		{"a quoted > in the tag", all,
+			"<script data-x=\"a>b\" data-y='c>d'>\n  var a = 1;\n</script>",
+			"<script data-x=\"a>b\" data-y='c>d'>var a = 1;</script>"},
+		{"pre stays verbatim", all,
+			"<pre>  keep\n   me  </pre>",
+			"<pre>  keep\n   me  </pre>"},
+	}
+	for _, c := range cases {
+		if got := string(minifyHTMLWith([]byte(c.src), c.langs)); got != c.want {
+			t.Errorf("%s:\n got %q\nwant %q", c.name, got, c.want)
+		}
+	}
+}
+
+// Whitespace before the first tag or after the last renders as nothing.
+func TestMinifyHTML_TrimsTheDocumentsEnds(t *testing.T) {
+	src := "\n  <!doctype html><html><body><p>a  b</p></body></html>\n  "
+	if got, want := string(minifyHTML([]byte(src))), "<!doctype html><html><body><p>a b</p></body></html>"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+	// Text at an end is still text, and its space still separates.
+	if got, want := string(minifyHTML([]byte("a  <b>c</b>  d"))), "a <b>c</b> d"; got != want {
+		t.Errorf("got %q, want %q", got, want)
 	}
 }

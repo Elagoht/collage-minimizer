@@ -9,7 +9,7 @@
     "properties": {
       "css": {
         "type": "boolean",
-        "description": "CSS minifies mounted stylesheets."
+        "description": "CSS minifies mounted stylesheets, and <style> elements in HTML."
       },
       "html": {
         "type": "boolean",
@@ -17,11 +17,11 @@
       },
       "js": {
         "type": "boolean",
-        "description": "JS minifies mounted scripts. Newlines are preserved whatever this is set to; see minifyJS."
+        "description": "JS minifies mounted scripts, and inline <script>s of JavaScript in HTML. Newlines are preserved whatever this is set to; see minifyJS."
       },
       "json": {
         "type": "boolean",
-        "description": "JSON minifies documents and mounted files served as JSON. It is exact: encoding/json knows the whole grammar."
+        "description": "JSON minifies documents and mounted files served as JSON, and, in HTML, a <script> holding JSON — structured data, an import map. It is exact: encoding/json knows the whole grammar."
       }
     }
   }

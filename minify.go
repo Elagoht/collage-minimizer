@@ -35,25 +35,37 @@ func minifyJSON(src []byte) []byte {
 }
 
 // protectedHTML are elements whose text content is significant to the byte. Inside
-// them nothing is collapsed: <pre> and <textarea> render their whitespace, and
-// <script> and <style> hold other languages entirely.
+// them nothing is collapsed as HTML: <pre> and <textarea> render their whitespace,
+// and <script> and <style> hold other languages entirely — which minifyHTMLWith
+// hands to that language's own minifier, when it is enabled.
 var protectedHTML = []string{"pre", "textarea", "script", "style"}
 
-// minifyHTML removes comments and collapses runs of whitespace.
+// languages are the inline languages minifyHTMLWith minifies: a <script> of
+// JavaScript under js, one of JSON under json, a <style> under css. Each follows
+// the key that turns the same language on for a mounted file.
+type languages struct{ js, css, json bool }
+
+// minifyHTML minifies HTML and leaves every inline script and style verbatim.
+func minifyHTML(src []byte) []byte { return minifyHTMLWith(src, languages{}) }
+
+// minifyHTMLWith removes comments and collapses runs of whitespace, and minifies
+// the inline languages langs enables.
 //
 // Whitespace in HTML is not free to delete: a run of it between two inline elements
 // renders as a single space, and removing it joins two words. So a run is collapsed
 // to one space rather than removed — except where it sits between a ">" and a "<"
-// with nothing else in it, which renders as nothing and can go entirely.
+// with nothing else in it, or before the first tag or after the last, which render
+// as nothing and can go entirely.
 //
 // Conditional comments are kept. They are comments to a parser and instructions to
 // the browsers that read them.
-func minifyHTML(src []byte) []byte {
+func minifyHTMLWith(src []byte, langs languages) []byte {
 	out := make([]byte, 0, len(src))
 	i := 0
 
 	for i < len(src) {
-		// A protected element copies through verbatim, opening tag to closing tag.
+		// A protected element keeps its tags as written, and its content unless
+		// that content is a language langs enables.
 		if src[i] == '<' {
 			if name, end, ok := openingTagName(src, i); ok && contains(protectedHTML, name) {
 				closing := "</" + name
@@ -67,7 +79,9 @@ func minifyHTML(src []byte) []byte {
 					out = append(out, src[i:]...)
 					return out
 				}
-				out = append(out, src[i:stop+tagEnd+1]...)
+				out = append(out, src[i:end]...)
+				out = append(out, minifyInline(name, src[i:end], src[end:stop], langs)...)
+				out = append(out, src[stop:stop+tagEnd+1]...)
 				i = stop + tagEnd + 1
 				continue
 			}
@@ -93,10 +107,13 @@ func minifyHTML(src []byte) []byte {
 			for j < len(src) && isSpace(src[j]) {
 				j++
 			}
-			// Between tags the run renders as nothing; anywhere else it renders as
-			// one space, and deleting it would join two words.
+			// Between tags, before the first or after the last, the run renders as
+			// nothing; anywhere else it renders as one space, and deleting it would
+			// join two words.
 			between := len(out) > 0 && out[len(out)-1] == '>' && j < len(src) && src[j] == '<'
-			if !between {
+			leading := len(out) == 0 && j < len(src) && src[j] == '<'
+			trailing := j == len(src) && len(out) > 0 && out[len(out)-1] == '>'
+			if !between && !leading && !trailing {
 				out = append(out, ' ')
 			}
 			i = j
@@ -107,6 +124,109 @@ func minifyHTML(src []byte) []byte {
 		i++
 	}
 	return out
+}
+
+// minifyInline minifies the content of a <script> or <style> whose language langs
+// enables, and returns anything else as it was: <pre>, <textarea>, a type it does
+// not know, a result no smaller than the input.
+//
+// The whitespace at either end of the content goes too. Before the first statement
+// or rule it carries nothing, and after the last the end of the element ends the
+// statement as a newline would.
+func minifyInline(name string, tag, body []byte, langs languages) []byte {
+	var out []byte
+	switch {
+	case name == "script" && langs.js && scriptLanguage(tag) == "js":
+		out = bytes.TrimSpace(minifyJS(body))
+	case name == "script" && langs.json && scriptLanguage(tag) == "json":
+		out = minifyJSON(body)
+	case name == "style" && langs.css && styleIsCSS(tag):
+		out = bytes.TrimSpace(minifyCSS(body))
+	default:
+		return body
+	}
+	if len(out) >= len(body) {
+		return body
+	}
+	return out
+}
+
+// scriptLanguage names what a <script> holds, from its type attribute: "js" for
+// a classic script or a module, "json" for data — structured data, an import map,
+// speculation rules — and "" for a type this does not know, which stays verbatim.
+func scriptLanguage(tag []byte) string {
+	value, _ := attrValue(tag, "type")
+	media, _, _ := strings.Cut(strings.ToLower(strings.TrimSpace(value)), ";")
+	media = strings.TrimSpace(media)
+	switch {
+	case media == "", media == "module", media == "text/javascript", media == "application/javascript",
+		media == "text/ecmascript", media == "application/ecmascript":
+		return "js"
+	case media == "importmap", media == "speculationrules",
+		strings.HasSuffix(media, "/json"), strings.HasSuffix(media, "+json"):
+		return "json"
+	default:
+		return ""
+	}
+}
+
+// styleIsCSS reports whether a <style> holds CSS: it names no type, or text/css.
+func styleIsCSS(tag []byte) bool {
+	value, _ := attrValue(tag, "type")
+	media, _, _ := strings.Cut(strings.ToLower(strings.TrimSpace(value)), ";")
+	media = strings.TrimSpace(media)
+	return media == "" || media == "text/css"
+}
+
+// attrValue returns the value of the attribute named name, ASCII case ignored, in
+// the opening tag tag — "<script type=module>" through its ">".
+func attrValue(tag []byte, name string) (string, bool) {
+	j := 1
+	for j < len(tag) && (isLetter(tag[j]) || isDigit(tag[j])) {
+		j++
+	}
+	for j < len(tag) {
+		for j < len(tag) && (isSpace(tag[j]) || tag[j] == '/') {
+			j++
+		}
+		start := j
+		for j < len(tag) && !isSpace(tag[j]) && tag[j] != '=' && tag[j] != '>' && tag[j] != '/' {
+			j++
+		}
+		if start == j {
+			return "", false
+		}
+		attr := strings.ToLower(string(tag[start:j]))
+		for j < len(tag) && isSpace(tag[j]) {
+			j++
+		}
+		value := ""
+		if j < len(tag) && tag[j] == '=' {
+			j++
+			for j < len(tag) && isSpace(tag[j]) {
+				j++
+			}
+			if j < len(tag) && (tag[j] == '"' || tag[j] == '\'') {
+				quote := tag[j]
+				end := bytes.IndexByte(tag[j+1:], quote)
+				if end < 0 {
+					return "", false
+				}
+				value = string(tag[j+1 : j+1+end])
+				j += end + 2
+			} else {
+				vstart := j
+				for j < len(tag) && !isSpace(tag[j]) && tag[j] != '>' {
+					j++
+				}
+				value = string(tag[vstart:j])
+			}
+		}
+		if attr == name {
+			return value, true
+		}
+	}
+	return "", false
 }
 
 // minifyCSS removes comments and collapses whitespace, leaving strings alone.
@@ -340,7 +460,9 @@ func contains(list []string, s string) bool {
 }
 
 // openingTagName returns the lowercased element name of the tag starting at i and
-// the index just past its ">".
+// the index just past its ">". A ">" inside a quoted attribute value does not end
+// the tag: taken for the end, it would put the element's content in the middle of
+// the attribute.
 func openingTagName(src []byte, i int) (string, int, bool) {
 	j := i + 1
 	if j >= len(src) || !isLetter(src[j]) {
@@ -351,11 +473,27 @@ func openingTagName(src []byte, i int) (string, int, bool) {
 		j++
 	}
 	name := strings.ToLower(string(src[start:j]))
-	end := bytes.IndexByte(src[j:], '>')
-	if end < 0 {
-		return "", 0, false
+	for j < len(src) {
+		switch src[j] {
+		case '>':
+			return name, j + 1, true
+		case '=':
+			j++
+			for j < len(src) && isSpace(src[j]) {
+				j++
+			}
+			if j < len(src) && (src[j] == '"' || src[j] == '\'') {
+				end := bytes.IndexByte(src[j+1:], src[j])
+				if end < 0 {
+					return "", 0, false
+				}
+				j += end + 2
+			}
+			continue
+		}
+		j++
 	}
-	return name, j + end + 1, true
+	return "", 0, false
 }
 
 // indexFoldFrom finds needle in src at or after from, ignoring ASCII case.

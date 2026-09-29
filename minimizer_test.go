@@ -226,3 +226,62 @@ func itoa(n int) string {
 	}
 	return string(digits)
 }
+
+// inlineSite renders one page holding each inline language, as a real layout has
+// them, through a minimizer configured by the application.
+func inlineSite(t *testing.T, config string) http.Handler {
+	t.Helper()
+	fsys := fstest.MapFS{
+		"page.html": &fstest.MapFile{Data: []byte("<!doctype html>\n<html>\n  <head>\n" +
+			"    <style>\n      .a {\n        color: red;\n      }\n    </style>\n" +
+			"    <script type=\"application/ld+json\">\n      { \"name\": \"Sen de Yaz\" }\n    </script>\n" +
+			"  </head>\n  <body>\n    <p>Hikâye</p>\n" +
+			"    <script nonce=\"n\">\n      // toast\n      go(\"İ  ş\")\n    </script>\n  </body>\n</html>\n")},
+	}
+	app, err := collage.New(&collage.Config{
+		Logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Template:     collage.TemplateConfig{FS: fsys, Extension: ".html"},
+		Plugins:      []collage.Plugin{minimizer.New()},
+		PluginConfig: map[string]json.RawMessage{minimizer.Name: json.RawMessage(config)},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	page := collage.NewPage("page").WithContent(collage.NewFragment("page", "page.html").Build()).WithPath("en", "/").Build()
+	if err := app.RegisterPage(page); err != nil {
+		t.Fatalf("RegisterPage: %v", err)
+	}
+	return app.Handler()
+}
+
+func TestPlugin_MinifiesInlineLanguagesByTheirOwnKeys(t *testing.T) {
+	style := "<style>.a { color: red; }</style>"
+	data := `<script type="application/ld+json">{"name":"Sen de Yaz"}</script>`
+	script := "<script nonce=\"n\">go(\"İ  ş\")</script>"
+	// Left as html/template rendered it, which drops a script's comments itself:
+	// the indentation is what shows it was not minified.
+	verbatim := "\n      go(\"İ  ş\")\n    </script>"
+
+	// New's defaults: CSS and JSON on, JavaScript off.
+	got := get(t, inlineSite(t, `{}`), "/").Body.String()
+	for _, want := range []string{style, data, verbatim, "<p>Hikâye</p>"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("defaults: body lacks %q:\n%s", want, got)
+		}
+	}
+	if !strings.HasPrefix(got, "<!doctype html>") || !strings.HasSuffix(got, "</html>") {
+		t.Errorf("defaults: whitespace kept at an end of the document: %q", got)
+	}
+
+	got = get(t, inlineSite(t, `{"js": true}`), "/").Body.String()
+	if !strings.Contains(got, script) {
+		t.Errorf(`{"js": true}: body lacks %q:\n%s`, script, got)
+	}
+
+	got = get(t, inlineSite(t, `{"js": true, "css": false, "json": false}`), "/").Body.String()
+	for _, want := range []string{"<style>\n      .a {", "<script type=\"application/ld+json\">\n      { \"name\"", script} {
+		if !strings.Contains(got, want) {
+			t.Errorf("only js: body lacks %q:\n%s", want, got)
+		}
+	}
+}

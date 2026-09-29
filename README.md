@@ -28,6 +28,13 @@ where the difference between a scanner and a parser bites hardest and because th
 saving is the smallest of the four — every newline is kept, so what goes is
 indentation and comments.
 
+Each key covers its language wherever it appears (since v0.1.5): `js` a mounted
+`.js` file and an inline `<script>` of JavaScript — no `type`, a JavaScript type, or
+`module`; `css` a mounted stylesheet and a `<style>`; `json` a JSON document and a
+`<script>` holding JSON — `application/ld+json`, `importmap`, `speculationrules`. A
+script or style of a type it does not know, `text/template` for one, stays
+verbatim. Before v0.1.5 every inline script and style was left as written.
+
 Anything the application supplies is decoded *over* those defaults, so a section
 naming only `{"js": true}` turns JavaScript on and leaves the rest as they were.
 `NewWith` bypasses the defaults entirely.
@@ -47,10 +54,13 @@ So:
 - **JSON** is compacted by `encoding/json`. This is the only one of the four that is
   lossless by construction rather than by care, because the standard library knows
   the whole grammar. Invalid JSON is returned untouched.
-- **HTML** keeps `<pre>`, `<textarea>`, `<script>` and `<style>` verbatim, keeps
-  conditional comments, and collapses a whitespace run to a single space rather than
-  removing it — a run between two inline elements renders as a space, and deleting
-  it joins two words.
+- **HTML** keeps `<pre>` and `<textarea>` verbatim, hands the content of a
+  `<script>` or `<style>` to its own language's minifier when that key is on (and
+  keeps it verbatim otherwise), keeps conditional comments, and collapses a
+  whitespace run to a single space rather than removing it — a run between two
+  inline elements renders as a space, and deleting it joins two words. Only before
+  the first tag, after the last, or between two tags does a run go entirely. A `>`
+  inside a quoted attribute does not end a tag.
 - **CSS** leaves strings alone and keeps the spaces around punctuation. `a :hover`
   and `a:hover` are a descendant selector and a pseudo-class, and telling a
   selector's colon from a declaration's requires knowing which side of the brace you

@@ -37,13 +37,14 @@ const Name = "elagoht/minimizer"
 type Config struct {
 	// HTML minifies rendered pages, and any mounted ".html" file.
 	HTML bool `json:"html"`
-	// JSON minifies documents and mounted files served as JSON. It is exact:
+	// JSON minifies documents and mounted files served as JSON, and, in HTML, a
+	// <script> holding JSON — structured data, an import map. It is exact:
 	// encoding/json knows the whole grammar.
 	JSON bool `json:"json"`
-	// CSS minifies mounted stylesheets.
+	// CSS minifies mounted stylesheets, and <style> elements in HTML.
 	CSS bool `json:"css"`
-	// JS minifies mounted scripts. Newlines are preserved whatever this is set to;
-	// see minifyJS.
+	// JS minifies mounted scripts, and inline <script>s of JavaScript in HTML.
+	// Newlines are preserved whatever this is set to; see minifyJS.
 	JS bool `json:"js"`
 }
 
@@ -73,7 +74,7 @@ func New() *Plugin {
 func NewWith(cfg Config) *Plugin { return &Plugin{cfg: cfg} }
 
 func (p *Plugin) Name() string    { return Name }
-func (p *Plugin) Version() string { return "0.1.4" }
+func (p *Plugin) Version() string { return "0.1.5" }
 
 // Configure decodes the application's configuration over whatever New set, and
 // registers the filesystem wrapper that minifies mounted assets.
@@ -119,7 +120,7 @@ func (p *Plugin) OnAfterRender(_ context.Context, ev *collage.AfterRenderEvent) 
 	if !p.cfg.HTML {
 		return nil
 	}
-	ev.HTML = p.record(ev.HTML, minifyHTML(ev.HTML))
+	ev.HTML = p.record(ev.HTML, p.minifyHTML(ev.HTML))
 	return nil
 }
 
@@ -133,13 +134,18 @@ func (p *Plugin) OnDocumentRendered(_ context.Context, ev *collage.DocumentRende
 	case p.cfg.JSON && isType(ev.ContentType, "json"):
 		ev.Body = p.record(ev.Body, minifyJSON(ev.Body))
 	case p.cfg.HTML && isType(ev.ContentType, "html"):
-		ev.Body = p.record(ev.Body, minifyHTML(ev.Body))
+		ev.Body = p.record(ev.Body, p.minifyHTML(ev.Body))
 	case p.cfg.CSS && isType(ev.ContentType, "css"):
 		ev.Body = p.record(ev.Body, minifyCSS(ev.Body))
 	case p.cfg.JS && isType(ev.ContentType, "javascript"):
 		ev.Body = p.record(ev.Body, minifyJS(ev.Body))
 	}
 	return nil
+}
+
+// minifyHTML minifies HTML and the inline languages the configuration enables.
+func (p *Plugin) minifyHTML(src []byte) []byte {
+	return minifyHTMLWith(src, languages{js: p.cfg.JS, css: p.cfg.CSS, json: p.cfg.JSON})
 }
 
 // record accounts for a minification and returns whichever of the two to use.
@@ -211,7 +217,7 @@ func (m *minifyingFS) minifierFor(name string) func([]byte) []byte {
 	switch strings.ToLower(path.Ext(name)) {
 	case ".html", ".htm":
 		if m.plugin.cfg.HTML {
-			return minifyHTML
+			return m.plugin.minifyHTML
 		}
 	case ".json":
 		if m.plugin.cfg.JSON {
