@@ -73,7 +73,7 @@ func New() *Plugin {
 func NewWith(cfg Config) *Plugin { return &Plugin{cfg: cfg} }
 
 func (p *Plugin) Name() string    { return Name }
-func (p *Plugin) Version() string { return "0.1.6" }
+func (p *Plugin) Version() string { return "0.1.7" }
 
 // Configure decodes the application's configuration over whatever New set, and
 // registers the filesystem wrapper that minifies mounted assets.

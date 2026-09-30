@@ -9,7 +9,7 @@
     "properties": {
       "css": {
         "type": "boolean",
-        "description": "CSS minifies mounted stylesheets, and <style> elements in HTML."
+        "description": "CSS minifies mounted stylesheets, and \u003cstyle\u003e elements in HTML."
       },
       "html": {
         "type": "boolean",
@@ -17,12 +17,13 @@
       },
       "js": {
         "type": "boolean",
-        "description": "JS minifies mounted scripts, and inline <script>s of JavaScript in HTML. A line break is kept wherever a semicolon may stand for it; see minifyJS."
+        "description": "JS minifies mounted scripts, and inline \u003cscript\u003es of JavaScript in HTML. A line break is kept wherever a semicolon may stand for it; see minifyJS."
       },
       "json": {
         "type": "boolean",
-        "description": "JSON minifies documents and mounted files served as JSON, and, in HTML, a <script> holding JSON — structured data, an import map. It is exact: encoding/json knows the whole grammar."
+        "description": "JSON minifies documents and mounted files served as JSON, and, in HTML, a \u003cscript\u003e holding JSON — structured data, an import map. It is exact: encoding/json knows the whole grammar."
       }
-    }
+    },
+    "additionalProperties": false
   }
 }
