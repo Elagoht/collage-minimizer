@@ -73,7 +73,7 @@ func New() *Plugin {
 func NewWith(cfg Config) *Plugin { return &Plugin{cfg: cfg} }
 
 func (p *Plugin) Name() string    { return Name }
-func (p *Plugin) Version() string { return "0.1.7" }
+func (p *Plugin) Version() string { return "0.1.9" }
 
 // Configure decodes the application's configuration over whatever New set, and
 // registers the filesystem wrapper that minifies mounted assets.
@@ -84,7 +84,8 @@ func (p *Plugin) Version() string { return "0.1.7" }
 // against the alternative of a second code path that has to stay in step.
 func (p *Plugin) Configure(_ context.Context, host collage.ConfigHost) error {
 	p.log = host.Logger()
-	if err := host.Config(&p.cfg); err != nil {
+	var err error
+	if p.cfg, err = collage.PluginConfig(host, p.cfg); err != nil {
 		return err
 	}
 	host.WrapMount(func(inner fs.FS) fs.FS { return &minifyingFS{inner: inner, plugin: p} })

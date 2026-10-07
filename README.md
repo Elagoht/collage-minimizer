@@ -98,6 +98,12 @@ document still parsing as the same JSON value.
 
 ## Changes
 
+### v0.1.9
+
+- v0.1.8 was tagged at v0.1.7's commit by mistake and is retracted.
+- Requires collage v0.50.0, whose `collage.PluginConfig` reads the
+  configuration.
+
 ### v0.1.4
 
 - Requires collage v0.28.0, whose `WithLayouts` the tests use; `WithLayout` is
