@@ -22,6 +22,7 @@ import (
 	"log/slog"
 	"path"
 	"strings"
+	"sync/atomic"
 
 	"github.com/Elagoht/collage/pkg/collage"
 )
@@ -55,9 +56,10 @@ type Plugin struct {
 
 	// savedIn and savedOut total the bytes seen and emitted, for the summary
 	// logged at shutdown. A minifier that is doing nothing is worth noticing, and
-	// a percentage is the only form in which anyone notices.
-	savedIn  int64
-	savedOut int64
+	// a percentage is the only form in which anyone notices. Atomic: pages and
+	// documents render concurrently, and every render adds to both.
+	savedIn  atomic.Int64
+	savedOut atomic.Int64
 }
 
 // New returns a minifier with everything except JavaScript enabled.
@@ -73,7 +75,7 @@ func New() *Plugin {
 func NewWith(cfg Config) *Plugin { return &Plugin{cfg: cfg} }
 
 func (p *Plugin) Name() string    { return Name }
-func (p *Plugin) Version() string { return "0.1.9" }
+func (p *Plugin) Version() string { return "0.1.10" }
 
 // Configure decodes the application's configuration over whatever New set, and
 // registers the filesystem wrapper that minifies mounted assets.
@@ -104,13 +106,14 @@ func (p *Plugin) Init(_ context.Context, host collage.Host) error {
 
 // Shutdown logs what the plugin saved.
 func (p *Plugin) Shutdown(context.Context) error {
-	if p.log == nil || p.savedIn == 0 {
+	in, out := p.savedIn.Load(), p.savedOut.Load()
+	if p.log == nil || in == 0 {
 		return nil
 	}
 	p.log.Info("minimizer: stopped",
-		"bytesIn", p.savedIn,
-		"bytesOut", p.savedOut,
-		"savedPercent", 100-(p.savedOut*100/p.savedIn),
+		"bytesIn", in,
+		"bytesOut", out,
+		"savedPercent", 100-(out*100/in),
 	)
 	return nil
 }
@@ -154,13 +157,12 @@ func (p *Plugin) minifyHTML(src []byte) []byte {
 // not" is not a reason to serve more bytes than arrived, and the check costs a
 // comparison.
 func (p *Plugin) record(in, out []byte) []byte {
+	p.savedIn.Add(int64(len(in)))
 	if len(out) >= len(in) {
-		p.savedIn += int64(len(in))
-		p.savedOut += int64(len(in))
+		p.savedOut.Add(int64(len(in)))
 		return in
 	}
-	p.savedIn += int64(len(in))
-	p.savedOut += int64(len(out))
+	p.savedOut.Add(int64(len(out)))
 	return out
 }
 

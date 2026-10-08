@@ -98,6 +98,14 @@ document still parsing as the same JSON value.
 
 ## Changes
 
+### v0.1.10
+
+- Fixes a data race: the byte totals behind the shutdown summary were plain
+  integers, added to by pages and documents rendering at the same time. They are
+  atomic now; a test renders concurrently under `-race`. The summary could be
+  wrong before; nothing else was affected.
+- Requires collage v0.55.0.
+
 ### v0.1.9
 
 - v0.1.8 was tagged at v0.1.7's commit by mistake and is retracted.
