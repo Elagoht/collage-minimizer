@@ -14,7 +14,7 @@ import (
 // read. Under -race it fails if the byte counters are not safe for that; without
 // it, the totals still have to add up.
 func TestConcurrentRendersAreCounted(t *testing.T) {
-	p := New()
+	p := New(Options{})
 	p.log = slog.New(slog.DiscardHandler)
 	page := []byte("<p>\n    <b>Hello</b>   world\n  </p>\n")
 	doc := []byte("{ \"a\" : 1 }")

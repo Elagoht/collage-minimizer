@@ -7,9 +7,11 @@ serves: rendered pages, documents, and mounted assets.
 import "github.com/Elagoht/collage-minimizer"
 
 app, err := collage.New(&collage.Config{
-	Plugins: []collage.Plugin{minimizer.New()},
+	Plugins: []collage.Plugin{minimizer.New(minimizer.Options{})},
 })
 ```
+
+Requires collage v0.61.0 or later.
 
 It must be supplied through `Config.Plugins`, not `RegisterPlugin`: it wraps mounted
 filesystems, and that happens while the application is built. `RegisterPlugin`
@@ -19,23 +21,30 @@ refuses it by name rather than skipping its `Configure` silently.
 
 ```json
 {
-  "elagoht/minimizer": { "html": true, "json": true, "css": true, "js": false }
+  "elagoht/minimizer": { "noHTML": false, "noJSON": false, "noCSS": false, "js": false }
 }
 ```
 
-`New()` enables HTML, JSON and CSS. JavaScript is off by default, because it is
-where the difference between a scanner and a parser bites hardest.
+| key | Go field | default | meaning |
+|---|---|---|---|
+| `noHTML` | `NoHTML` | `false` | leave rendered pages and mounted `.html` files as they are |
+| `noJSON` | `NoJSON` | `false` | leave JSON documents, mounted `.json` files and JSON `<script>`s as they are |
+| `noCSS` | `NoCSS` | `false` | leave stylesheets and `<style>` as they are |
+| `js` | `JS` | `false` | minify scripts and inline JavaScript too |
+
+The zero `Options` minifies HTML, JSON and CSS. JavaScript is off by default,
+because it is where the difference between a scanner and a parser bites hardest.
 
 Each key covers its language wherever it appears (since v0.1.5): `js` a mounted
 `.js` file and an inline `<script>` of JavaScript — no `type`, a JavaScript type, or
-`module`; `css` a mounted stylesheet and a `<style>`; `json` a JSON document and a
+`module`; `noCSS` a mounted stylesheet and a `<style>`; `noJSON` a JSON document and a
 `<script>` holding JSON — `application/ld+json`, `importmap`, `speculationrules`. A
 script or style of a type it does not know, `text/template` for one, stays
 verbatim. Before v0.1.5 every inline script and style was left as written.
 
-Anything the application supplies is decoded *over* those defaults, so a section
-naming only `{"js": true}` turns JavaScript on and leaves the rest as they were.
-`NewWith` bypasses the defaults entirely.
+Anything the application supplies is decoded *over* the `Options` given to `New`,
+so a section naming only `{"js": true}` turns JavaScript on and leaves the rest as
+they were.
 
 ## What it will not do
 
@@ -97,6 +106,27 @@ a JavaScript string surviving intact, `</b> world` keeping its space, a minified
 document still parsing as the same JSON value.
 
 ## Changes
+
+### v0.2.0
+
+Changed in v0.2.0, for the v1 plugin conventions. A key that was removed now
+stops the application at start with `unknown key`, so nothing is silently
+ignored.
+
+| was | now |
+|---|---|
+| `minimizer.New()` | `minimizer.New(minimizer.Options{})` |
+| `minimizer.NewWith(minimizer.Config{…})` | `minimizer.New(minimizer.Options{…})` |
+| `minimizer.Config` | `minimizer.Options` |
+| `"html": false` / `HTML` | `"noHTML": true` / `NoHTML` |
+| `"json": false` / `JSON` | `"noJSON": true` / `NoJSON` |
+| `"css": false` / `CSS` | `"noCSS": true` / `NoCSS` |
+| `"html": true`, `"json": true`, `"css": true` | remove the key: it is the default |
+
+- Fixes `NewWith(Config{JS: true})` silently turning HTML, CSS and JSON off:
+  the zero value of each field is now its default, so `Options{JS: true}`
+  minifies all four.
+- Requires collage v0.61.0.
 
 ### v0.1.10
 

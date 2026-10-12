@@ -2,8 +2,8 @@
 // what an application serves: rendered pages, documents, and mounted assets.
 //
 //	app, err := collage.New(&collage.Config{
-//		Plugins: []collage.Plugin{minimizer.New()},
-//		PluginConfig: pluginConfig, // optional; see Config
+//		Plugins: []collage.Plugin{minimizer.New(minimizer.Options{})},
+//		PluginConfig: pluginConfig, // optional; see Options
 //	})
 //
 // It has to be supplied through Config.Plugins rather than RegisterPlugin, because
@@ -31,19 +31,23 @@ import (
 // configuration is found under.
 const Name = "elagoht/minimizer"
 
-// Config selects which formats are minified. The zero value minifies nothing, so a
-// Config decoded from an absent section leaves the plugin inert rather than
-// surprising an application that never asked for it — New's defaults are what turn
-// things on.
-type Config struct {
-	// HTML minifies rendered pages, and any mounted ".html" file.
-	HTML bool `json:"html"`
-	// JSON minifies documents and mounted files served as JSON, and, in HTML, a
-	// <script> holding JSON — structured data, an import map. It is exact:
-	// encoding/json knows the whole grammar.
-	JSON bool `json:"json"`
-	// CSS minifies mounted stylesheets, and <style> elements in HTML.
-	CSS bool `json:"css"`
+// Options selects which formats are minified. The zero value is the default:
+// HTML, JSON and CSS are minified and JavaScript is not. JavaScript is off by
+// default because it is the format where the difference between a scanner and a
+// parser bites hardest; an application that wants it says so.
+//
+// The application's configuration is decoded over the Options given to New, so a
+// section naming only {"js": true} turns JavaScript on and leaves the rest as they
+// were.
+type Options struct {
+	// NoHTML leaves rendered pages, and mounted ".html" files, as they are.
+	NoHTML bool `json:"noHTML"`
+	// NoJSON leaves documents and mounted files served as JSON, and, in HTML, a
+	// <script> holding JSON — structured data, an import map — as they are. JSON
+	// minification is exact: encoding/json knows the whole grammar.
+	NoJSON bool `json:"noJSON"`
+	// NoCSS leaves mounted stylesheets, and <style> elements in HTML, as they are.
+	NoCSS bool `json:"noCSS"`
 	// JS minifies mounted scripts, and inline <script>s of JavaScript in HTML.
 	// A line break is kept wherever a semicolon may stand for it; see minifyJS.
 	JS bool `json:"js"`
@@ -51,8 +55,8 @@ type Config struct {
 
 // Plugin is the minifier.
 type Plugin struct {
-	cfg Config
-	log *slog.Logger
+	opts Options
+	log  *slog.Logger
 
 	// savedIn and savedOut total the bytes seen and emitted, for the summary
 	// logged at shutdown. A minifier that is doing nothing is worth noticing, and
@@ -62,22 +66,14 @@ type Plugin struct {
 	savedOut atomic.Int64
 }
 
-// New returns a minifier with everything except JavaScript enabled.
-//
-// JavaScript is off by default because it is the format where the difference
-// between a scanner and a parser bites hardest. An application that wants it says
-// so.
-func New() *Plugin {
-	return &Plugin{cfg: Config{HTML: true, JSON: true, CSS: true}}
-}
-
-// NewWith returns a minifier configured exactly as given, bypassing the defaults.
-func NewWith(cfg Config) *Plugin { return &Plugin{cfg: cfg} }
+// New returns a minifier configured by opts; the zero Options minifies
+// everything except JavaScript.
+func New(opts Options) *Plugin { return &Plugin{opts: opts} }
 
 func (p *Plugin) Name() string    { return Name }
-func (p *Plugin) Version() string { return "0.1.11" }
+func (p *Plugin) Version() string { return "0.2.0" }
 
-// Configure decodes the application's configuration over whatever New set, and
+// Configure decodes the application's configuration over the Options New was given, and
 // registers the filesystem wrapper that minifies mounted assets.
 //
 // The wrapper is registered unconditionally rather than only when a relevant format
@@ -87,7 +83,7 @@ func (p *Plugin) Version() string { return "0.1.11" }
 func (p *Plugin) Configure(_ context.Context, host collage.ConfigHost) error {
 	p.log = host.Logger()
 	var err error
-	if p.cfg, err = collage.PluginConfig(host, p.cfg); err != nil {
+	if p.opts, err = collage.PluginConfig(host, p.opts); err != nil {
 		return err
 	}
 	host.WrapMount(func(inner fs.FS) fs.FS { return &minifyingFS{inner: inner, plugin: p} })
@@ -120,7 +116,7 @@ func (p *Plugin) Shutdown(context.Context) error {
 
 // OnAfterRender minifies a rendered page.
 func (p *Plugin) OnAfterRender(_ context.Context, ev *collage.AfterRenderEvent) error {
-	if !p.cfg.HTML {
+	if p.opts.NoHTML {
 		return nil
 	}
 	ev.HTML = p.record(ev.HTML, p.minifyHTML(ev.HTML))
@@ -134,13 +130,13 @@ func (p *Plugin) OnAfterRender(_ context.Context, ev *collage.AfterRenderEvent) 
 // cannot be wrong.
 func (p *Plugin) OnDocumentRendered(_ context.Context, ev *collage.DocumentRenderedEvent) error {
 	switch {
-	case p.cfg.JSON && isType(ev.ContentType, "json"):
+	case !p.opts.NoJSON && isType(ev.ContentType, "json"):
 		ev.Body = p.record(ev.Body, minifyJSON(ev.Body))
-	case p.cfg.HTML && isType(ev.ContentType, "html"):
+	case !p.opts.NoHTML && isType(ev.ContentType, "html"):
 		ev.Body = p.record(ev.Body, p.minifyHTML(ev.Body))
-	case p.cfg.CSS && isType(ev.ContentType, "css"):
+	case !p.opts.NoCSS && isType(ev.ContentType, "css"):
 		ev.Body = p.record(ev.Body, minifyCSS(ev.Body))
-	case p.cfg.JS && isType(ev.ContentType, "javascript"):
+	case p.opts.JS && isType(ev.ContentType, "javascript"):
 		ev.Body = p.record(ev.Body, minifyJS(ev.Body))
 	}
 	return nil
@@ -148,7 +144,7 @@ func (p *Plugin) OnDocumentRendered(_ context.Context, ev *collage.DocumentRende
 
 // minifyHTML minifies HTML and the inline languages the configuration enables.
 func (p *Plugin) minifyHTML(src []byte) []byte {
-	return minifyHTMLWith(src, languages{js: p.cfg.JS, css: p.cfg.CSS, json: p.cfg.JSON})
+	return minifyHTMLWith(src, languages{js: p.opts.JS, css: !p.opts.NoCSS, json: !p.opts.NoJSON})
 }
 
 // record accounts for a minification and returns whichever of the two to use.
@@ -218,19 +214,19 @@ func (m *minifyingFS) Open(name string) (fs.File, error) {
 func (m *minifyingFS) minifierFor(name string) func([]byte) []byte {
 	switch strings.ToLower(path.Ext(name)) {
 	case ".html", ".htm":
-		if m.plugin.cfg.HTML {
+		if !m.plugin.opts.NoHTML {
 			return m.plugin.minifyHTML
 		}
 	case ".json":
-		if m.plugin.cfg.JSON {
+		if !m.plugin.opts.NoJSON {
 			return minifyJSON
 		}
 	case ".css":
-		if m.plugin.cfg.CSS {
+		if !m.plugin.opts.NoCSS {
 			return minifyCSS
 		}
 	case ".js", ".mjs":
-		if m.plugin.cfg.JS {
+		if m.plugin.opts.JS {
 			return minifyJS
 		}
 	}

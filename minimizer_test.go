@@ -12,8 +12,9 @@ import (
 	"testing/fstest"
 
 	"github.com/Elagoht/collage/pkg/collage"
+	"github.com/Elagoht/collage/pkg/collagetest"
 
-	"github.com/Elagoht/collage-minimizer"
+	minimizer "github.com/Elagoht/collage-minimizer"
 )
 
 // templates is the smallest site that can show minification happening: a layout
@@ -79,7 +80,7 @@ func get(t *testing.T, h http.Handler, target string) *httptest.ResponseRecorder
 
 func TestPlugin_MinifiesPagesDocumentsAndAssets(t *testing.T) {
 	plain := newSite(t)
-	small := newSite(t, minimizer.NewWith(minimizer.Config{HTML: true, JSON: true, CSS: true, JS: true}))
+	small := newSite(t, minimizer.New(minimizer.Options{JS: true}))
 
 	for _, target := range []string{"/", "/data.json", "/static/app.css", "/static/app.js"} {
 		before := get(t, plain, target).Body.Len()
@@ -91,7 +92,7 @@ func TestPlugin_MinifiesPagesDocumentsAndAssets(t *testing.T) {
 }
 
 func TestPlugin_MinifiedPageIsStillTheSamePage(t *testing.T) {
-	site := newSite(t, minimizer.New())
+	site := newSite(t, minimizer.New(minimizer.Options{}))
 
 	body := get(t, site, "/").Body.String()
 	if !strings.Contains(body, "</b> world") {
@@ -106,7 +107,7 @@ func TestPlugin_MinifiedPageIsStillTheSamePage(t *testing.T) {
 }
 
 func TestPlugin_MinifiedDocumentIsStillValidJSON(t *testing.T) {
-	site := newSite(t, minimizer.New())
+	site := newSite(t, minimizer.New(minimizer.Options{}))
 
 	body := get(t, site, "/data.json").Body.Bytes()
 	var decoded map[string]any // any: what encoding/json decodes into
@@ -123,7 +124,7 @@ func TestPlugin_SuffixRangeAddressesTheMinifiedBytes(t *testing.T) {
 	// right bytes if the length the server works from describes what it serves.
 	// The mount hands ServeContent an io.ReadSeeker over the minified content, so
 	// it does — this pins that down from the outside, where it is observable.
-	site := newSite(t, minimizer.New())
+	site := newSite(t, minimizer.New(minimizer.Options{}))
 
 	full := get(t, site, "/static/app.css").Body.String()
 	if len(full) < 4 {
@@ -150,7 +151,7 @@ func TestPlugin_RangeRequestsStillWorkOnAMinifiedAsset(t *testing.T) {
 	// The reason minification wraps the filesystem rather than the response: a
 	// transformation applied per request shifts every byte offset, and a range
 	// request then returns the wrong slice.
-	site := newSite(t, minimizer.New())
+	site := newSite(t, minimizer.New(minimizer.Options{}))
 
 	full := get(t, site, "/static/app.css").Body.String()
 
@@ -168,7 +169,7 @@ func TestPlugin_RangeRequestsStillWorkOnAMinifiedAsset(t *testing.T) {
 }
 
 func TestPlugin_DisabledFormatsAreLeftAlone(t *testing.T) {
-	site := newSite(t, minimizer.NewWith(minimizer.Config{HTML: true}))
+	site := newSite(t, minimizer.New(minimizer.Options{NoJSON: true, NoCSS: true}))
 	plain := newSite(t)
 
 	if got, want := get(t, site, "/static/app.css").Body.String(), get(t, plain, "/static/app.css").Body.String(); got != want {
@@ -180,23 +181,43 @@ func TestPlugin_DisabledFormatsAreLeftAlone(t *testing.T) {
 }
 
 func TestPlugin_ConfigComesFromTheApplication(t *testing.T) {
-	p := minimizer.NewWith(minimizer.Config{})
-	app, err := collage.New(&collage.Config{
-		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Template: collage.TemplateConfig{FS: templates, Extension: ".html"},
-		Plugins:  []collage.Plugin{p},
-		PluginConfig: map[string]json.RawMessage{
-			minimizer.Name: json.RawMessage(`{"html":true,"css":false}`),
-		},
-	})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	if app == nil {
-		t.Fatal("New returned no application")
-	}
 	// Proven through behaviour rather than a getter: the plugin exposes no
 	// accessor, and one added only for a test would be surface nobody else wants.
+	page := "<p>\n      <b>Hello</b>   world\n    </p>\n"
+	site := collagetest.NewSite(t,
+		collagetest.WithPlugins(minimizer.New(minimizer.Options{})),
+		collagetest.WithPluginConfig(minimizer.Name, `{"noHTML": true}`),
+		collagetest.WithTemplates(map[string]string{"home.html": page}),
+	)
+	if body := site.Get("/").WantStatus(http.StatusOK).Body; !strings.Contains(body, page) {
+		t.Errorf(`{"noHTML": true}: the page was minified: %q`, body)
+	}
+}
+
+// TestNew_JSKeepsTheOtherDefaults pins the bug NewWith had: asking for
+// JavaScript silently turned HTML, CSS and JSON off.
+func TestNew_JSKeepsTheOtherDefaults(t *testing.T) {
+	plain := newSite(t)
+	site := newSite(t, minimizer.New(minimizer.Options{JS: true}))
+	for _, target := range []string{"/", "/data.json", "/static/app.css", "/static/app.js"} {
+		if get(t, site, target).Body.Len() >= get(t, plain, target).Body.Len() {
+			t.Errorf("GET %s: not minified with Options{JS: true}", target)
+		}
+	}
+}
+
+// TestPlugin_OldKeysFailAtInit pins that the keys v0.2.0 replaced stop the
+// application rather than being ignored.
+func TestPlugin_OldKeysFailAtInit(t *testing.T) {
+	for _, config := range []string{`{"html": false}`, `{"json": false}`, `{"css": false}`} {
+		_, err := collagetest.TrySite(t,
+			collagetest.WithPlugins(minimizer.New(minimizer.Options{})),
+			collagetest.WithPluginConfig(minimizer.Name, config),
+		)
+		if err == nil || !strings.Contains(err.Error(), "unknown key") {
+			t.Errorf("%s: err = %v, want an unknown key error", config, err)
+		}
+	}
 }
 
 func TestPlugin_RejectedByRegisterPlugin(t *testing.T) {
@@ -210,7 +231,7 @@ func TestPlugin_RejectedByRegisterPlugin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if err := app.RegisterPlugin(minimizer.New()); err == nil {
+	if err := app.RegisterPlugin(minimizer.New(minimizer.Options{})); err == nil {
 		t.Fatal("RegisterPlugin accepted a Configurer, which would silently skip Configure")
 	}
 }
@@ -231,27 +252,20 @@ func itoa(n int) string {
 // them, through a minimizer configured by the application.
 func inlineSite(t *testing.T, config string) http.Handler {
 	t.Helper()
-	fsys := fstest.MapFS{
-		"page.html": &fstest.MapFile{Data: []byte("<!doctype html>\n<html>\n  <head>\n" +
-			"    <style>\n      .a {\n        color: red;\n      }\n    </style>\n" +
-			"    <script type=\"application/ld+json\">\n      { \"name\": \"Sen de Yaz\" }\n    </script>\n" +
-			"  </head>\n  <body>\n    <p>Hikâye</p>\n" +
-			"    <script nonce=\"n\">\n      // toast\n      go(\"İ  ş\")\n    </script>\n  </body>\n</html>\n")},
-	}
-	app, err := collage.New(&collage.Config{
-		Logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Template:     collage.TemplateConfig{FS: fsys, Extension: ".html"},
-		Plugins:      []collage.Plugin{minimizer.New()},
-		PluginConfig: map[string]json.RawMessage{minimizer.Name: json.RawMessage(config)},
-	})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
+	source := ("<!doctype html>\n<html>\n  <head>\n" +
+		"    <style>\n      .a {\n        color: red;\n      }\n    </style>\n" +
+		"    <script type=\"application/ld+json\">\n      { \"name\": \"Sen de Yaz\" }\n    </script>\n" +
+		"  </head>\n  <body>\n    <p>Hikâye</p>\n" +
+		"    <script nonce=\"n\">\n      // toast\n      go(\"İ  ş\")\n    </script>\n  </body>\n</html>\n")
 	page := collage.NewPage("page").WithContent(collage.NewFragment("page", "page.html").Build()).WithPath("en", "/").Build()
-	if err := app.RegisterPage(page); err != nil {
-		t.Fatalf("RegisterPage: %v", err)
-	}
-	return app.Handler()
+	site := collagetest.NewSite(t,
+		collagetest.WithoutHome(),
+		collagetest.WithTemplates(map[string]string{"page.html": source}),
+		collagetest.WithRegister(page),
+		collagetest.WithPlugins(minimizer.New(minimizer.Options{})),
+		collagetest.WithPluginConfig(minimizer.Name, config),
+	)
+	return site.App.Handler()
 }
 
 func TestPlugin_MinifiesInlineLanguagesByTheirOwnKeys(t *testing.T) {
@@ -262,7 +276,7 @@ func TestPlugin_MinifiesInlineLanguagesByTheirOwnKeys(t *testing.T) {
 	// the indentation is what shows it was not minified.
 	verbatim := "\n      go(\"İ  ş\")\n    </script>"
 
-	// New's defaults: CSS and JSON on, JavaScript off.
+	// The zero Options: CSS and JSON on, JavaScript off.
 	got := get(t, inlineSite(t, `{}`), "/").Body.String()
 	for _, want := range []string{style, data, verbatim, "<p>Hikâye</p>"} {
 		if !strings.Contains(got, want) {
@@ -278,7 +292,7 @@ func TestPlugin_MinifiesInlineLanguagesByTheirOwnKeys(t *testing.T) {
 		t.Errorf(`{"js": true}: body lacks %q:\n%s`, script, got)
 	}
 
-	got = get(t, inlineSite(t, `{"js": true, "css": false, "json": false}`), "/").Body.String()
+	got = get(t, inlineSite(t, `{"js": true, "noCSS": true, "noJSON": true}`), "/").Body.String()
 	for _, want := range []string{"<style>\n      .a {", "<script type=\"application/ld+json\">\n      { \"name\"", script} {
 		if !strings.Contains(got, want) {
 			t.Errorf("only js: body lacks %q:\n%s", want, got)
