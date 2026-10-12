@@ -27,9 +27,9 @@ refuses it by name rather than skipping its `Configure` silently.
 
 | key | Go field | default | meaning |
 |---|---|---|---|
-| `noHTML` | `NoHTML` | `false` | leave rendered pages and mounted `.html` files as they are |
-| `noJSON` | `NoJSON` | `false` | leave JSON documents, mounted `.json` files and JSON `<script>`s as they are |
-| `noCSS` | `NoCSS` | `false` | leave stylesheets and `<style>` as they are |
+| `noHTML` | `NoHTML` | `false` | turn HTML minifying off: rendered pages and mounted `.html` files are left as they are |
+| `noJSON` | `NoJSON` | `false` | turn JSON minifying off: JSON documents, mounted `.json` files and JSON `<script>`s are left as they are |
+| `noCSS` | `NoCSS` | `false` | turn CSS minifying off: mounted stylesheets and `<style>` are left as they are |
 | `js` | `JS` | `false` | minify scripts and inline JavaScript too |
 
 The zero `Options` minifies HTML, JSON and CSS. JavaScript is off by default,
@@ -37,8 +37,9 @@ because it is where the difference between a scanner and a parser bites hardest.
 
 Each key covers its language wherever it appears (since v0.1.5): `js` a mounted
 `.js` file and an inline `<script>` of JavaScript — no `type`, a JavaScript type, or
-`module`; `noCSS` a mounted stylesheet and a `<style>`; `noJSON` a JSON document and a
-`<script>` holding JSON — `application/ld+json`, `importmap`, `speculationrules`. A
+`module`; CSS a mounted stylesheet and a `<style>`, both minified unless `noCSS` is
+set; JSON a JSON document and a `<script>` holding JSON — `application/ld+json`,
+`importmap`, `speculationrules` — minified unless `noJSON` is set. A
 script or style of a type it does not know, `text/template` for one, stays
 verbatim. Before v0.1.5 every inline script and style was left as written.
 
@@ -123,6 +124,10 @@ ignored.
 | `"css": false` / `CSS` | `"noCSS": true` / `NoCSS` |
 | `"html": true`, `"json": true`, `"css": true` | remove the key: it is the default |
 
+- A format left unset is now **on**, where `NewWith` left it off. An application
+  that called `NewWith(Config{HTML: true})` to minify HTML only now writes
+  `New(Options{NoCSS: true, NoJSON: true})`; without those, CSS and JSON are
+  minified after migrating.
 - Fixes `NewWith(Config{JS: true})` silently turning HTML, CSS and JSON off:
   the zero value of each field is now its default, so `Options{JS: true}`
   minifies all four.
