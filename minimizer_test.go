@@ -19,34 +19,19 @@ import (
 
 // templates is the smallest site that can show minification happening: a layout
 // with enough whitespace to be worth removing.
-var templates = fstest.MapFS{
-	"layouts/main.html": &fstest.MapFile{Data: []byte(
-		"<!DOCTYPE html>\n<html>\n  <head>\n    <!-- a comment -->\n    <title>t</title>\n  </head>\n  <body>\n    {{slot \"content\"}}\n  </body>\n</html>\n")},
-	"pages/home.html": &fstest.MapFile{Data: []byte("<p>\n      <b>Hello</b>   world\n    </p>\n")},
+var templates = map[string]string{
+	"layouts/main.html": "<!DOCTYPE html>\n<html>\n  <head>\n    <!-- a comment -->\n    <title>t</title>\n  </head>\n  <body>\n    {{slot \"content\"}}\n  </body>\n</html>\n",
+	"pages/home.html":   "<p>\n      <b>Hello</b>   world\n    </p>\n",
 }
 
 func newSite(t *testing.T, plugins ...collage.Plugin) http.Handler {
 	t.Helper()
-
-	app, err := collage.New(&collage.Config{
-		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Template: collage.TemplateConfig{FS: templates, Extension: ".html"},
-		Plugins:  plugins,
-	})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-
 	layout := collage.NewFragment("layout", "layouts/main.html").WithSlot("content", collage.SlotRequired, collage.SlotSingle).Build()
 	home := collage.NewPage("home").
 		WithLayouts(layout).
 		WithContent(collage.NewFragment("home", "pages/home.html").Build()).
 		WithPath("en", "/").
 		Build()
-	if err := app.RegisterPage(home); err != nil {
-		t.Fatalf("RegisterPage: %v", err)
-	}
-
 	doc := collage.NewDocument("data", "application/json; charset=utf-8").
 		WithPath("en", "/data.json").
 		WithHandler(func(context.Context, *collage.RenderContext) ([]byte, []string, error) {
@@ -54,18 +39,17 @@ func newSite(t *testing.T, plugins ...collage.Plugin) http.Handler {
 		}).
 		Dynamic().
 		Build()
-	if err := app.RegisterDocument(doc); err != nil {
-		t.Fatalf("RegisterDocument: %v", err)
-	}
-
 	assets := fstest.MapFS{
 		"app.css": &fstest.MapFile{Data: []byte(".a {\n  /* note */\n  color: red;\n}\n")},
 		"app.js":  &fstest.MapFile{Data: []byte("function f() {\n    // note\n    return 1\n}\n")},
 	}
-	if err := app.Mount("/static/", assets); err != nil {
-		t.Fatalf("Mount: %v", err)
-	}
-	return app.Handler()
+	return collagetest.NewSite(t,
+		collagetest.WithoutHome(),
+		collagetest.WithTemplates(templates),
+		collagetest.WithPlugins(plugins...),
+		collagetest.WithRegister(home, doc),
+		collagetest.WithSetup(func(app *collage.App) error { return app.Mount("/static/", assets) }),
+	).App.Handler()
 }
 
 func get(t *testing.T, h http.Handler, target string) *httptest.ResponseRecorder {
@@ -224,9 +208,11 @@ func TestPlugin_RejectedByRegisterPlugin(t *testing.T) {
 	// It wraps mounted filesystems, which happens while the application is built,
 	// so it must arrive through Config.Plugins. Being skipped silently would mean
 	// assets quietly stopped being minified.
+	// Built by hand: the application must not have started when the plugin
+	// arrives, which NewSite's started application cannot show.
 	app, err := collage.New(&collage.Config{
 		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Template: collage.TemplateConfig{FS: templates, Extension: ".html"},
+		Template: collage.TemplateConfig{FS: fstest.MapFS{"home.html": &fstest.MapFile{Data: []byte("<p></p>")}}, Extension: ".html"},
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
