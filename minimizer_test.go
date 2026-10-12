@@ -36,7 +36,7 @@ func newSite(t *testing.T, plugins ...collage.Plugin) http.Handler {
 		t.Fatalf("New: %v", err)
 	}
 
-	layout := collage.NewFragment("layout", "layouts/main.html").WithSlot("content", true, false).Build()
+	layout := collage.NewFragment("layout", "layouts/main.html").WithSlot("content", collage.SlotRequired, collage.SlotSingle).Build()
 	home := collage.NewPage("home").
 		WithLayouts(layout).
 		WithContent(collage.NewFragment("home", "pages/home.html").Build()).
